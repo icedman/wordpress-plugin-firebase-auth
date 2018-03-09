@@ -1,5 +1,6 @@
 <?php
-
+require('vendor/autoload.php');
+use \Firebase\JWT\JWT;
 
 include_once('FirebaseAuthentication_LifeCycle.php');
 
@@ -12,11 +13,9 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
     public function getOptionMetaData() {
         //  http://plugin.michael-simpson.com/?page_id=31
         return array(
-            //'_version' => array('Installed Version'), // Leave this one commented-out. Uncomment to test upgrades.
-            'ATextInput' => array(__('Enter in some text', 'my-awesome-plugin')),
-            'AmAwesome' => array(__('I like this awesome plugin', 'my-awesome-plugin'), 'false', 'true'),
-            'CanDoSomething' => array(__('Which user role can do something', 'my-awesome-plugin'),
-                                        'Administrator', 'Editor', 'Author', 'Contributor', 'Subscriber', 'Anyone')
+            '_version' => array('Installed Version'), // Leave this one commented-out. Uncomment to test upgrades.
+            'Firebase_Config' => array(__('Firebase Configuration', 'Firebase_Config'), 'textarea'),
+        
         );
     }
 
@@ -112,9 +111,21 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
         // http://plugin.michael-simpson.com/?page_id=41
 
         add_action('rest_api_init', function() {
-            register_rest_route( 'firebase-auth/v1', '/login/(?P<id>\d+)', array(
+            register_rest_route( 'firebase-auth/v1', '/verify', array(
+                'methods' => 'POST',
+                'callback' => array( $this, 'verify'),
+                'args' => array(
+                    'id' => array(
+                        'validate_callback' => function($param, $request, $key) {
+                            return is_numeric( $param );
+                        }),
+                    ),
+                )
+            );
+
+            register_rest_route( 'firebase-auth/v1', '/fetch_keys', array(
                 'methods' => 'GET',
-                'callback' => array( $this, 'login'),
+                'callback' => array( $this, 'fetch_keys'),
                 'args' => array(
                     'id' => array(
                         'validate_callback' => function($param, $request, $key) {
@@ -127,12 +138,40 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
 
     }
 
-    function login( WP_REST_Request $request ) {
+    function fetch_keys( WP_REST_Request $request ) {
+        $pkeys_raw = $this->getGoogleKeys();
+        return $pkeys_raw;
+    }
+
+    function verify( WP_REST_Request $request ) {
+        $token = $request->get_param('token');
+
+        $pkeys_raw = file_get_contents(__DIR__ . '/keys.cache');
+        $pkeys = json_decode($pkeys_raw, true);
+
+        try {
+            $decoded = JWT::decode($token, $pkeys, ["RS256"]);
+        } catch(Exception $e) {
+            return [ 'status'=>'error', 'message'=>'invalid token', $pkeys ];
+        }
+
+        $opts = json_decode(stripcslashes(get_option('FirebaseAuthentication_Plugin_Firebase_Config', '{}')));
+
+        $aud = $decoded->aud;
+        if (empty($aud)) {
+            return [ 'status'=>'error','message'=>'not verified' ];
+        }
+
+        if ($aud != $opts->projectId) {
+            return ['status'=>'error','message'=>'not verified' ];
+        }
+
+        // create wp_user entry
+
+        return [ 'status'=>'oxk','message'=>'verified', 'decoded'=>$decoded ];
+
         // You can access parameters via direct array access on the object:
         // $param = $request['some_param'];
-
-        // Or via the helper method:
-        // $param = $request->get_param( 'some_param' );
 
         // You can get the combined, merged set of parameters:
         // $parameters = $request->get_params();
@@ -147,7 +186,44 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
         // Uploads aren't merged in, but can be accessed separately:
         // $parameters = $request->get_file_params();
 
-        return [ 'login' => 'test' ];
+        // return [ 'login' => $token, 'keys' => $keys, 'decoded' => $decoded, 'options' => $opts ];
+    }
+
+    function getGoogleKeys() {
+        // settings
+        $url = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"; // json source
+        $cache = __DIR__."/keys.cache"; // make this file in same dir
+        $force_refresh = false; // dev
+        $refresh = 60*60; // once an hour
+        // cache json results so to not over-query (api restrictions)
+        if ($force_refresh || ((time() - filectime($cache)) > ($refresh) || 0 == filesize($cache))) {
+            // read json source
+            $ch = curl_init($url) or die("curl issue");
+            $curl_options = array(
+                CURLOPT_RETURNTRANSFER  => true,
+                CURLOPT_HEADER      => false,
+                CURLOPT_FOLLOWLOCATION  => false,
+                CURLOPT_ENCODING    => "",
+                CURLOPT_AUTOREFERER     => true,
+                CURLOPT_CONNECTTIMEOUT  => 7,
+                CURLOPT_TIMEOUT     => 7,
+                CURLOPT_MAXREDIRS   => 3,
+                CURLOPT_SSL_VERIFYHOST  => false,
+                CURLOPT_USERAGENT   => "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/525.13 (KHTML, like Gecko) Chrome/0.A.B.C Safari/525.13"
+            );
+            curl_setopt_array($ch, $curl_options);
+            $curlcontent = curl_exec( $ch );
+            curl_close( $ch );
+            
+            $handle = fopen($cache, 'wb') or die('no fopen');   
+            $json_cache = $curlcontent;
+            fwrite($handle, $json_cache);
+            fclose($handle);
+        } else {
+            $json_cache = file_get_contents($cache); //locally
+        }
+        return $json_cache;
+        
     }
 
 }
