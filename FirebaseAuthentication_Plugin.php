@@ -110,28 +110,47 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
         // Register AJAX hooks
         // http://plugin.michael-simpson.com/?page_id=41
 
+        // ------------------------
+        //  rest API
+        // ------------------------
+        // add_action('init', function() {
+        //     $this->authenticate();
+        // });
+
+        add_filter( 'determine_current_user',  array($this, 'authenticate'), 30 );
+        add_action( 'set_current_user', array($this, 'authenticate'), 50);
+
         add_action('rest_api_init', function() {
+
+            $this->authenticate();
+
             register_rest_route( 'firebase-auth/v1', '/verify', array(
-                'methods' => 'POST',
+                'methods' => [ 'GET', 'POST' ],
                 'callback' => array( $this, 'verify'),
                 'args' => array(
-                    'id' => array(
-                        'validate_callback' => function($param, $request, $key) {
-                            return is_numeric( $param );
-                        }),
+                    'token' => array(
+                        'type' => 'string',
+                        'description' => 'Firebase login token'
+                        ),
+                    ),
+                )
+            );
+
+            register_rest_route( 'firebase-auth/v1', '/verify', array(
+                'methods' => 'POST',
+                'callback' => array( $this, 'verifyAndUpdate'),
+                'args' => array(
+                    'token' => array(
+                        'type' => 'string',
+                        'description' => 'Firebase login token'
+                        ),
                     ),
                 )
             );
 
             register_rest_route( 'firebase-auth/v1', '/fetch_keys', array(
                 'methods' => 'GET',
-                'callback' => array( $this, 'fetch_keys'),
-                'args' => array(
-                    'id' => array(
-                        'validate_callback' => function($param, $request, $key) {
-                            return is_numeric( $param );
-                        }),
-                    ),
+                'callback' => array( $this, 'fetch_keys')
                 )
             );
         });
@@ -143,9 +162,44 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
         return $pkeys_raw;
     }
 
-    function verify( WP_REST_Request $request ) {
+    function verify( WP_REST_Request $request, $thenUpdate = false ) {
         $token = $request->get_param('token');
+        $result = $this->verifyToken($token);
 
+        if ($result['status'] != 'ok') {
+            return $result;
+        }
+
+        // create wp_user entry
+        if ($thenUpdate) {
+            $result['user'] = $this->createOrUpdateUser($result['decoded']);
+        }
+
+        return $result;
+
+        // You can access parameters via direct array access on the object:
+        // $param = $request['some_param'];
+
+        // You can get the combined, merged set of parameters:
+        // $parameters = $request->get_params();
+
+        // The individual sets of parameters are also available, if needed:
+        // $parameters = $request->get_url_params();
+        // $parameters = $request->get_query_params();
+        // $parameters = $request->get_body_params();
+        // $parameters = $request->get_json_params();
+        // $parameters = $request->get_default_params();
+
+        // Uploads aren't merged in, but can be accessed separately:
+        // $parameters = $request->get_file_params();
+    }
+
+    function verifyAndUpdate( WP_REST_Request $request ) {
+        $this->verify($request, true);
+    }
+
+    // ------------------------
+    function verifyToken($token) {
         $pkeys_raw = file_get_contents(__DIR__ . '/keys.cache');
         $pkeys = json_decode($pkeys_raw, true);
 
@@ -166,27 +220,56 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
             return ['status'=>'error','message'=>'not verified' ];
         }
 
-        // create wp_user entry
+        return [ 'status'=>'ok','message'=>'verified', 'decoded'=>$decoded ];
+    }
 
-        return [ 'status'=>'oxk','message'=>'verified', 'decoded'=>$decoded ];
+    function createOrUpdateUser($fbuser) {
+        $username = explode('@',$fbuser->email)[0];
+        $sanitized_user_login = sanitize_user($username);
 
-        // You can access parameters via direct array access on the object:
-        // $param = $request['some_param'];
+        $default_user_name = $sanitized_user_login;
+        $i = 1;
+        while (username_exists($sanitized_user_login)) {
+            $sanitized_user_login = $default_user_name . $i;
+            $i++;
+        }
 
-        // You can get the combined, merged set of parameters:
-        // $parameters = $request->get_params();
+        $user = get_user_by('email', $fbuser->email);
+        if (empty($user)) {
 
-        // The individual sets of parameters are also available, if needed:
-        // $parameters = $request->get_url_params();
-        // $parameters = $request->get_query_params();
-        // $parameters = $request->get_body_params();
-        // $parameters = $request->get_json_params();
-        // $parameters = $request->get_default_params();
+            require_once(ABSPATH . WPINC . '/registration.php');
+            $random_password = wp_generate_password($length = 12, $include_standard_special_chars = false);
 
-        // Uploads aren't merged in, but can be accessed separately:
-        // $parameters = $request->get_file_params();
+            $ID = wp_create_user($sanitized_user_login, $random_password, $fbuser->email);
+            if (is_wp_error($ID)) {
+                // it won't error!
+                return [];
+            }
+        } else {
+            $ID = $user->ID;
+        }
 
-        // return [ 'login' => $token, 'keys' => $keys, 'decoded' => $decoded, 'options' => $opts ];
+        $user = get_user_by( 'id', $ID ); 
+
+        $user = get_userdata($ID);
+
+        if (!empty($fbuser->name) && empty($user->data->first_name) && empty($user->data->last_name)) {
+            $n = explode(' ', $fbuser->name);
+            $first_name = $n[0];
+            $last_name = '';
+            if (count($n)>1) {
+                $last_name = $n[1];
+            }
+            wp_update_user( array( 'ID' => $ID, 'first_name' => $first_name, 'last_name' => $last_name ) );
+            $user->data->display_name = $fbuser->name;
+        }
+
+        if (!empty($fbuser->phone_number) && empty(get_usermeta($ID, 'billing_phone'))) {
+            update_usermeta($ID, 'billing_phone', $fbuser->phone_number);
+        }
+
+        // update_usermeta( $user_id, 'school', $school );
+        return $user;
     }
 
     function getGoogleKeys() {
@@ -226,4 +309,65 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
         
     }
 
+    /** 
+     * Get hearder Authorization
+     * */
+    function getAuthorizationHeader(){
+        global $_SERVER;
+        $headers = null;
+        if (isset($_SERVER['Authorization'])) {
+            $headers = trim($_SERVER["Authorization"]);
+        }
+        else if (isset($_SERVER['HTTP_AUTHORIZATION'])) { //Nginx or fast CGI
+            $headers = trim($_SERVER["HTTP_AUTHORIZATION"]);
+        } elseif (function_exists('apache_request_headers')) {
+            $requestHeaders = apache_request_headers();
+            // Server-side fix for bug in old Android versions (a nice side-effect of this fix means we don't care about capitalization for Authorization)
+            $requestHeaders = array_combine(array_map('ucwords', array_keys($requestHeaders)), array_values($requestHeaders));
+            //print_r($requestHeaders);
+            if (isset($requestHeaders['Authorization'])) {
+                $headers = trim($requestHeaders['Authorization']);
+            }
+        }
+        return $headers;
+    }
+
+    /**
+     * get access token from header
+     * */
+    function getBearerToken() {
+        $headers = $this->getAuthorizationHeader();
+        // HEADER: Get the access token from the header
+        if (!empty($headers)) {
+            if (preg_match('/Bearer\s(\S+)/', $headers, $matches)) {
+                return $matches[1];
+            }
+        }
+        return null;
+    }
+
+    function authenticate() {
+        global $current_user;
+        if (!empty($current_user) && !empty($current_user->ID)) {
+            return;
+        }
+
+        $token = trim($this->getBearerToken());
+        if (empty($token)) {
+            return;
+        }
+
+        $result = $this->verifyToken($token);
+        // print_r($this->getBearerToken());
+
+        $user = get_user_by('email', $result['decoded']->email);
+        if (!empty($user)) {
+            wp_set_current_user( $user->ID, $user->data->user_login );
+            global $_current_user_id;
+            $_current_user_id = $user->ID;
+        }
+
+        $current_user = new WP_User( $_current_user_id, $name );
+        setup_userdata( $current_user->ID );
+    }
 }
