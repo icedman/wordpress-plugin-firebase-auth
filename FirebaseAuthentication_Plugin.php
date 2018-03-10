@@ -113,28 +113,40 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
         // ------------------------
         //  rest API
         // ------------------------
-        // add_action('init', function() {
-        //     $this->authenticate();
-        // });
 
-        add_filter( 'determine_current_user',  array($this, 'authenticate'), 30 );
+        //add_filter( 'determine_current_user',  array($this, 'authenticate'), 30 );
         add_action( 'set_current_user', array($this, 'authenticate'), 50);
-
+     
         add_action('rest_api_init', function() {
 
             $this->authenticate();
 
-            register_rest_route( 'firebase-auth/v1', '/verify', array(
-                'methods' => [ 'GET', 'POST' ],
-                'callback' => array( $this, 'verify'),
-                'args' => array(
-                    'token' => array(
-                        'type' => 'string',
-                        'description' => 'Firebase login token'
-                        ),
-                    ),
-                )
+            // meta fields
+            register_meta( 'user',
+                'billing_phone',
+                [ 'show_in_rest' => true ]
             );
+            register_meta( 'user',
+                'first_name',
+                [ 'show_in_rest' => true ]
+            );
+            register_meta( 'user',
+                'last_name',
+                [ 'show_in_rest' => true ]
+            );
+
+
+            // register_rest_route( 'firebase-auth/v1', '/verify', array(
+            //     'methods' => 'GET',
+            //     'callback' => array( $this, 'verify'),
+            //     'args' => array(
+            //         'token' => array(
+            //             'type' => 'string',
+            //             'description' => 'Firebase login token'
+            //             ),
+            //         ),
+            //     )
+            // );
 
             register_rest_route( 'firebase-auth/v1', '/verify', array(
                 'methods' => 'POST',
@@ -195,7 +207,7 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
     }
 
     function verifyAndUpdate( WP_REST_Request $request ) {
-        $this->verify($request, true);
+        return $this->verify($request, true);
     }
 
     // ------------------------
@@ -250,7 +262,6 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
         }
 
         $user = get_user_by( 'id', $ID ); 
-
         $user = get_userdata($ID);
 
         if (!empty($fbuser->name) && empty($user->data->first_name) && empty($user->data->last_name)) {
@@ -369,5 +380,9 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
 
         $current_user = new WP_User( $_current_user_id, $name );
         setup_userdata( $current_user->ID );
+    }
+
+    function userMetaGetCallback( $user, $field_name, $request) {
+       return get_user_meta( $user[ 'id' ], $field_name, true );
     }
 }
