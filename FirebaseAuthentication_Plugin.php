@@ -4,6 +4,12 @@ use \Firebase\JWT\JWT;
 
 include_once('FirebaseAuthentication_LifeCycle.php');
 
+function sanitize_sample_count_meta( $meta_value, $meta_key, $meta_type ) {
+    echo 123;
+    exit;
+    return 'xxx';
+}
+
 class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
 
     /**
@@ -135,6 +141,23 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
                 [ 'show_in_rest' => true ]
             );
 
+            register_meta( 'post',
+                '_price',
+                [ 'show_in_rest' => true ]
+            );
+
+            register_meta( 'term',
+                'vendor_data',
+                [ 'show_in_rest' => true,
+                    'sanitize_callback' => 'sanitize_sample_count_meta'
+                ]
+            );
+
+            register_taxonomy( 'wcpv_product_vendors', array( 'product' ), [
+                'public' => true,
+                'label' => 'vendors',
+                'show_in_rest' => true
+            ] );
 
             // register_rest_route( 'firebase-auth/v1', '/verify', array(
             //     'methods' => 'GET',
