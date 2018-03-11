@@ -4,13 +4,12 @@ use \Firebase\JWT\JWT;
 
 include_once('FirebaseAuthentication_LifeCycle.php');
 
-function sanitize_sample_count_meta( $meta_value, $meta_key, $meta_type ) {
-    echo 123;
-    exit;
-    return 'xxx';
-}
 
 class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
+
+    function sanitizeVendorData($meta_value, $meta_key, $meta_type) {
+        return json_decode(json_encode($meta_value));
+    }
 
     /**
      * See: http://plugin.michael-simpson.com/?page_id=31
@@ -148,9 +147,7 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
 
             register_meta( 'term',
                 'vendor_data',
-                [ 'show_in_rest' => true,
-                    'sanitize_callback' => 'sanitize_sample_count_meta'
-                ]
+                [ 'show_in_rest' => [ 'prepare_callback' => array($this, 'sanitizeVendorData') ] ]
             );
 
             register_taxonomy( 'wcpv_product_vendors', array( 'product' ), [
