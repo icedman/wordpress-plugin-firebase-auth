@@ -7,6 +7,67 @@ include_once('FirebaseAuthentication_LifeCycle.php');
 
 class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
 
+    function validateAddToCart($add, $product_id, $quantity) {
+        // return '123';
+    }
+
+    function filterShippingRates( $rates, $package ) {
+        echo '<pre>';
+
+        // class-wc-shipping line 328 (disable sessions to check)
+
+        foreach( $package['contents'] as $content) {
+            $product_id = $content['product_id'];
+            break;
+        }
+
+        $terms = wp_get_post_terms($product_id, 'wcpv_product_vendors');
+        if (!empty($terms)) {
+            $vendor_data = get_term_meta( $terms[0]->term_id, 'vendor_data', true );
+            print_r($terms);
+            print_r($vendor_data);
+        }
+        
+        //-------------------
+        // get merchant rates
+        //-------------------
+        
+        foreach ( $rates as $id => $rate ) {
+            print_r($rate->label);
+            $rates[$id]->cost = 10;
+        }
+
+        // print_r($rates);
+
+
+
+        exit;
+        // $p = json_encode($package, 1);
+        // file_put_contents('/tmp/test.txt', "{$p}\n", FILE_APPEND);
+
+
+            // Store in session to avoid recalculation.
+                // WC()->session->set( $session_key, array(
+                //  'package_hash' => $package_hash,
+                //  'rates'        => $package['rates'],
+                // ) );
+
+        return $rates;
+    }
+
+    function validateOrder($posted) {
+
+        //-------------------
+        // check against inventory / capacity
+        //-------------------
+        $packages = WC()->shipping->get_packages();
+    }
+
+    function filterShippingLabels($method) {
+        $label = split(':',$method)[0];
+        return $label;
+    }
+
     function sanitizeVendorData($meta_value, $meta_key, $meta_type) {
         return json_decode(json_encode($meta_value));
     }
@@ -84,6 +145,20 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
     }
 
     public function addActionsAndFilters() {
+
+        //--------------------
+        // shipping tests
+        //--------------------
+
+        // add_action('woocommerce_review_order_before_cart_contents', array($this,'validateOrder'), 10);
+
+        // add_action('woocommerce_after_checkout_validation', array($this,'validateOrder'), 10);
+
+        // add_filter( 'woocommerce_cart_shipping_method_full_label', array($this, 'filterShippingLabels'), 50);
+
+        // add_filter( 'woocommerce_package_rates', array($this, 'filterShippingRates'), 10, 2);
+        // add_filter( 'woocommerce_add_to_cart_validation', array($this, 'validateAddToCart'), 10, 3);
+        //--------------------
 
         // Add options administration page
         // http://plugin.michael-simpson.com/?page_id=47
@@ -233,6 +308,7 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
     // ------------------------
     function verifyToken($token) {
         $pkeys_raw = file_get_contents(__DIR__ . '/keys.cache');
+        $pkeys_raw = trim($pkeys_raw);
         $pkeys = json_decode($pkeys_raw, true);
 
         try {
@@ -241,7 +317,9 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
             return [ 'status'=>'error', 'message'=>'invalid token', $pkeys ];
         }
 
-        $opts = json_decode(stripcslashes(get_option('FirebaseAuthentication_Plugin_Firebase_Config', '{}')));
+        $opts_raw = trim(get_option('FirebaseAuthentication_Plugin_Firebase_Config', '{}'));
+        $opts_raw = stripcslashes($opts_raw);
+        $opts = json_decode($opts_raw);
 
         $aud = $decoded->aud;
         if (empty($aud)) {
@@ -373,6 +451,11 @@ class FirebaseAuthentication_Plugin extends FirebaseAuthentication_LifeCycle {
             if (preg_match('/Bearer\s(\S+)/', $headers, $matches)) {
                 return $matches[1];
             }
+        }
+
+        global $_REQUEST;
+        if (!empty($_REQUEST['token'])) {
+            return $_REQUEST['token'];
         }
         return null;
     }
